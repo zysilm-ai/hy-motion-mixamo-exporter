@@ -30,6 +30,7 @@ dependencies = [
     "psutil>=5.9",
     "rich>=13.0",
     "websocket-client>=1.6",
+    "huggingface_hub>=0.20",
 ]
 
 [project.optional-dependencies]

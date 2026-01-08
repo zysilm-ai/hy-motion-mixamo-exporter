@@ -132,6 +132,8 @@ def install_fbxsdkpy():
 
 def download_models(model_key: str):
     """Download HY-Motion model weights from HuggingFace."""
+    from huggingface_hub import snapshot_download
+
     model_config = MODELS[model_key]
     model_name = model_config["name"]
 
@@ -141,22 +143,26 @@ def download_models(model_key: str):
     model_dir = MODELS_DIR / "ckpts" / "tencent" / model_name
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    # Use huggingface-cli to download (installed with comfy-cli)
+    # Use huggingface_hub Python API (avoids Windows encoding issues with CLI)
     try:
-        run_command(
-            [
-                "huggingface-cli",
-                "download",
-                model_config["repo"],
-                "--local-dir",
-                str(MODELS_DIR / "ckpts" / "tencent"),
-                "--include",
-                f"{model_name}/*",
-            ],
-            f"Downloading {model_name} (this may take several minutes)",
-        )
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task(
+                description=f"Downloading {model_name} (this may take several minutes)",
+                total=None
+            )
+            snapshot_download(
+                repo_id=model_config["repo"],
+                local_dir=str(MODELS_DIR / "ckpts" / "tencent"),
+                allow_patterns=[f"{model_name}/*"],
+            )
+        console.print(f"[green]Downloaded {model_name} successfully.[/green]")
     except Exception as e:
-        console.print(f"[yellow]Warning:[/yellow] Model download via CLI failed: {e}")
+        console.print(f"[yellow]Warning:[/yellow] Model download failed: {e}")
         console.print("Models will be downloaded automatically on first use.")
 
 
