@@ -40,7 +40,8 @@ def progress_callback(step: int, total: int):
 @click.option(
     "--character", "-c",
     type=click.Path(exists=True),
-    help="Mixamo character FBX file for retargeting (optional)",
+    required=True,
+    help="Mixamo character FBX file for retargeting (required)",
 )
 @click.option(
     "--duration", "-d",
@@ -80,7 +81,7 @@ def progress_callback(step: int, total: int):
 def main(
     prompt: str,
     output: str,
-    character: str | None,
+    character: str,
     duration: float,
     model: str,
     precision: str,
@@ -92,12 +93,15 @@ def main(
 
     PROMPT is the text description of the motion you want to generate.
 
+    Requires a Mixamo character FBX file for retargeting. Download one from:
+    https://www.mixamo.com/#/?page=1&type=Character
+
     Examples:
 
     \b
-      hy-motion-export "A person walks forward" -o walk.fbx
+      hy-motion-export "A person walks forward" -c character.fbx -o walk.fbx
       hy-motion-export "Dancing happily" -c character.fbx -o dance.fbx
-      hy-motion-export "Running" -d 5.0 -o running.fbx
+      hy-motion-export "Running" -c character.fbx -d 5.0 -o running.fbx
     """
     console.print(f"[bold blue]HY-Motion Mixamo Exporter v{__version__}[/bold blue]")
     console.print()
@@ -130,21 +134,13 @@ def main(
     # Print generation info
     console.print()
     console.print(f'[bold]Prompt:[/bold] "{prompt}"')
-    console.print(f"[dim]Duration: {duration}s[/dim]")
-    if character:
-        console.print(f"[dim]Character: {character}[/dim]")
+    console.print(f"[dim]Duration: {duration}s, Character: {character}[/dim]")
     console.print()
 
     try:
         # Import inference module (delayed to avoid slow imports on help)
         from .inference import HYMotionInference
-        from .export import export_fbx, check_fbx_available
-
-        # Check FBX availability
-        if not check_fbx_available():
-            console.print("[yellow]Warning: fbxsdkpy not installed. FBX export may fail.[/yellow]")
-            console.print("[yellow]Install with: pip install fbxsdkpy --extra-index-url https://gitlab.inria.fr/api/v4/projects/18692/packages/pypi/simple[/yellow]")
-            console.print()
+        from .export import export_fbx
 
         # Initialize inference
         model_path = get_model_path(selected_model)

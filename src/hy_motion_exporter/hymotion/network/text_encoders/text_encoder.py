@@ -135,7 +135,11 @@ class HYTextModel(nn.Module):
         if self.llm_type is None or self.llm_text_encoder is None or self.llm_tokenizer is None:
             raise ValueError("LLM model not initialized")
 
-        device = get_module_device(self)
+        # For quantized models with device_map="auto", get device from embedding layer
+        if hasattr(self.llm_text_encoder, 'model') and hasattr(self.llm_text_encoder.model, 'embed_tokens'):
+            device = self.llm_text_encoder.model.embed_tokens.weight.device
+        else:
+            device = get_module_device(self)
         llm_text = [
             self.llm_tokenizer.apply_chat_template(
                 self.apply_text_to_template(one_text, LLM_ENCODER_LAYOUT[self.llm_type]["template"]),

@@ -1253,5 +1253,64 @@ def main():
     save_fbx(tgt_man, tgt_scene, args.output)
     print("Done!")
 
+def retarget_fbx(
+    npz_path: str,
+    target_fbx_path: str,
+    output_path: str,
+    yaw_offset: float = 0.0,
+    force_scale: float = None,
+    neutral_fingers: bool = True,
+    mapping_file: str = None,
+) -> str:
+    """
+    Retarget motion from NPZ file to a target FBX skeleton.
+
+    Args:
+        npz_path: Path to NPZ file with motion data
+        target_fbx_path: Path to target FBX (e.g., Mixamo character)
+        output_path: Output FBX path
+        yaw_offset: Rotation offset in degrees
+        force_scale: Override auto scale (None = auto)
+        neutral_fingers: Use neutral finger rest pose
+        mapping_file: Optional bone mapping JSON file
+
+    Returns:
+        Output path if successful
+    """
+    if not HAS_FBX_SDK:
+        raise ImportError("FBX SDK not available. Install fbxsdkpy.")
+
+    print(f"[Retarget] Source: {npz_path}")
+    print(f"[Retarget] Target: {target_fbx_path}")
+    print(f"[Retarget] Output: {output_path}")
+
+    # Load bone mapping
+    mapping = load_bone_mapping(mapping_file)
+
+    # Load source (NPZ)
+    src_skel = load_npz(npz_path)
+
+    # Load target FBX
+    tgt_man, tgt_scene, tgt_skel = load_fbx(target_fbx_path)
+
+    # Retarget animation
+    scale = force_scale if force_scale is not None else 0.0
+    rots, locs = retarget_animation(
+        src_skel, tgt_skel, mapping, scale, yaw_offset, neutral_fingers
+    )
+
+    # Apply to target scene
+    src_time_mode = tgt_scene.GetGlobalSettings().GetTimeMode()
+    apply_retargeted_animation(
+        tgt_scene, tgt_skel, rots, locs,
+        src_skel.frame_start, src_skel.frame_end, src_time_mode
+    )
+
+    # Save output
+    save_fbx(tgt_man, tgt_scene, output_path)
+
+    return output_path
+
+
 if __name__ == "__main__":
     main()

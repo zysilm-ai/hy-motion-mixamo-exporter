@@ -159,6 +159,12 @@ class HYMotionInference:
         with torch.no_grad():
             vtxt_raw, ctxt_raw, ctxt_length = self.text_encoder.encode(text_list)
 
+        # Ensure tensors are on the pipeline's device
+        pipeline_device = next(self.pipeline.parameters()).device
+        vtxt_raw = vtxt_raw.to(pipeline_device)
+        ctxt_raw = ctxt_raw.to(pipeline_device)
+        ctxt_length = ctxt_length.to(pipeline_device)
+
         return {
             "text_vec_raw": vtxt_raw,
             "text_ctxt_raw": ctxt_raw,

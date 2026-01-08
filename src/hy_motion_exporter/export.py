@@ -1,18 +1,16 @@
 """
-FBX export module with Mixamo retargeting support.
+FBX export module with Mixamo retargeting.
 
 This module handles exporting generated motion to FBX format,
-with optional retargeting to Mixamo character skeletons.
+retargeting to Mixamo character skeletons.
 """
 
 import os
-import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import numpy as np
-import torch
 
 # Check for FBX SDK availability
 try:
@@ -22,25 +20,20 @@ except ImportError:
     FBX_AVAILABLE = False
 
 
-def get_assets_dir() -> Path:
-    """Get the assets directory path."""
-    return Path(__file__).parent / "assets"
-
-
 def export_fbx(
     motion_data: Dict[str, Any],
     output_path: str,
-    character_fbx: Optional[str] = None,
+    character_fbx: str,
     yaw_offset: float = 0.0,
     scale: float = 0.0,
 ) -> str:
     """
-    Export motion data to FBX format.
+    Export motion data to FBX format with Mixamo retargeting.
 
     Args:
         motion_data: Motion data from HYMotionInference.generate()
         output_path: Path for the output FBX file
-        character_fbx: Optional path to Mixamo character FBX for retargeting
+        character_fbx: Path to Mixamo character FBX for retargeting
         yaw_offset: Rotation offset in degrees
         scale: Scale factor (0 = auto-detect)
 
@@ -49,7 +42,7 @@ def export_fbx(
 
     Raises:
         ImportError: If fbxsdkpy is not installed
-        FileNotFoundError: If character_fbx is specified but not found
+        FileNotFoundError: If character_fbx not found
     """
     if not FBX_AVAILABLE:
         raise ImportError(
@@ -57,76 +50,63 @@ def export_fbx(
             "pip install fbxsdkpy --extra-index-url https://gitlab.inria.fr/api/v4/projects/18692/packages/pypi/simple"
         )
 
+    if not Path(character_fbx).exists():
+        raise FileNotFoundError(f"Character FBX not found: {character_fbx}")
+
     # Ensure output directory exists
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Extract motion data
-    smpl_data = _extract_smpl_data(motion_data)
+    # Extract motion data in retarget format
+    retarget_data = _extract_retarget_data(motion_data)
 
-    if character_fbx:
-        # Retarget to Mixamo character
-        if not Path(character_fbx).exists():
-            raise FileNotFoundError(f"Character FBX not found: {character_fbx}")
-
-        print(f"[Export] Retargeting to Mixamo character: {character_fbx}")
-        return _export_with_retargeting(
-            smpl_data, output_path, character_fbx, yaw_offset, scale
-        )
-    else:
-        # Export with default wooden boy skeleton
-        print("[Export] Exporting with default skeleton")
-        return _export_wooden_boy(smpl_data, output_path)
+    print(f"[Export] Retargeting to Mixamo character: {character_fbx}")
+    return _export_with_retargeting(
+        retarget_data, output_path, character_fbx, yaw_offset, scale
+    )
 
 
-def _extract_smpl_data(motion_data: Dict[str, Any]) -> Dict[str, np.ndarray]:
-    """Extract SMPL data from motion output."""
-    # Check if smpl_data is already provided
-    if "smpl_data" in motion_data:
-        smpl_data_list = motion_data["smpl_data"]
-        if isinstance(smpl_data_list, list) and len(smpl_data_list) > 0:
-            return smpl_data_list[0]
-        return smpl_data_list
+def _extract_retarget_data(motion_data: Dict[str, Any]) -> Dict[str, np.ndarray]:
+    """Extract motion data in format expected by retarget_fbx.
 
-    # Otherwise, construct from rot6d and transl
-    from .hymotion.pipeline.body_model import construct_smpl_data_dict
+    The motion pipeline returns:
+    - keypoints3d: (B, T, 52, 3) joint positions
+    - rot6d: (B, T, 22, 6) rotation data
+    - transl: (B, T, 3) translation
+    - root_rotations_mat: (B, T, 3, 3) root rotation matrices
+    """
+    import torch
 
+    # Get data from motion output
+    keypoints3d = motion_data.get("keypoints3d")
     rot6d = motion_data.get("rot6d")
     transl = motion_data.get("transl")
+    root_rotations_mat = motion_data.get("root_rotations_mat")
 
-    if rot6d is None or transl is None:
-        raise ValueError("Motion data must contain 'rot6d' and 'transl' or 'smpl_data'")
+    if rot6d is None or transl is None or keypoints3d is None:
+        raise ValueError("Motion data must contain 'rot6d', 'transl', and 'keypoints3d'")
 
-    # Handle batch dimension
-    if rot6d.dim() == 4:  # (B, N, J, 6)
-        rot6d = rot6d[0]  # Take first sample
-        transl = transl[0]
+    # Helper to convert and remove batch dim
+    def to_numpy(t):
+        if isinstance(t, torch.Tensor):
+            t = t.cpu().numpy()
+        # Remove batch dim if present (take first sample)
+        if len(t.shape) == 4:
+            t = t[0]
+        elif len(t.shape) == 3 and t.shape[0] == 1:
+            t = t[0]
+        return t
 
-    return construct_smpl_data_dict(rot6d, transl)
-
-
-def _export_wooden_boy(
-    smpl_data: Dict[str, np.ndarray],
-    output_path: Path,
-) -> str:
-    """Export motion using the wooden boy FBX template."""
-    from .hymotion.utils.smplh2woodfbx import SMPLH2WoodFBX
-
-    # Initialize converter
-    converter = SMPLH2WoodFBX()
-
-    # Convert and save
-    success = converter.convert_npz_to_fbx(smpl_data, str(output_path))
-
-    if success:
-        print(f"[Export] FBX saved: {output_path}")
-        return str(output_path)
-    else:
-        raise RuntimeError("FBX export failed")
+    return {
+        "keypoints3d": to_numpy(keypoints3d),
+        "rot6d": to_numpy(rot6d),
+        "transl": to_numpy(transl),
+        "root_rotations_mat": to_numpy(root_rotations_mat),
+    }
 
 
 def _export_with_retargeting(
-    smpl_data: Dict[str, np.ndarray],
+    retarget_data: Dict[str, np.ndarray],
     output_path: Path,
     character_fbx: str,
     yaw_offset: float,
@@ -136,9 +116,8 @@ def _export_with_retargeting(
     from .hymotion.utils.retarget_fbx import retarget_fbx
 
     # Create temp file for NPZ data
-    with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as tmp:
-        np.savez(tmp.name, **smpl_data)
-        npz_path = tmp.name
+    npz_path = tempfile.mktemp(suffix=".npz")
+    np.savez(npz_path, **retarget_data)
 
     try:
         # Perform retargeting
@@ -155,8 +134,11 @@ def _export_with_retargeting(
 
     finally:
         # Clean up temp file
-        if os.path.exists(npz_path):
-            os.unlink(npz_path)
+        try:
+            if os.path.exists(npz_path):
+                os.unlink(npz_path)
+        except PermissionError:
+            pass  # Windows may hold the file briefly
 
 
 def export_npz(
