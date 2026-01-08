@@ -1,6 +1,6 @@
-# HY-Motion Mixamo Exporter
+# HY-Motion FBX Exporter
 
-A CLI tool that generates 3D character animations from text prompts using [HY-Motion 1.0](https://github.com/Tencent-Hunyuan/HY-Motion) and exports them as Mixamo-compatible FBX files.
+A CLI tool that generates 3D character animations from text prompts using [HY-Motion 1.0](https://github.com/Tencent-Hunyuan/HY-Motion) and exports them as (Mixamo-compatible) FBX files.
 
 ## Features
 
