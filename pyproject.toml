@@ -51,8 +51,8 @@ hy-motion-export = "hy_motion_exporter.cli:main"
 hy-motion-uninstall = "hy_motion_exporter.cli:uninstall"
 
 [project.urls]
-Homepage = "https://github.com/hy-motion-mixamo-exporter"
-Repository = "https://github.com/hy-motion-mixamo-exporter"
+Homepage = "https://github.com/zysilm-ai/hy-motion-mixamo-exporter"
+Repository = "https://github.com/zysilm-ai/hy-motion-mixamo-exporter"
 
 [tool.setuptools.packages.find]
 where = ["src"]

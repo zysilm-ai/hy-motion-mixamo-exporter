@@ -168,3 +168,16 @@ def get_model_path(model_key: str) -> Path:
     """Get the path to a model's checkpoint directory."""
     model_name = MODELS[model_key]["name"]
     return MODELS_DIR / "ckpts" / "tencent" / model_name
+
+
+def is_model_installed(model_key: str) -> bool:
+    """Check if a specific model is installed.
+
+    Args:
+        model_key: Model key ("full" or "lite")
+
+    Returns:
+        True if the model's config and checkpoint files exist
+    """
+    model_path = get_model_path(model_key)
+    return (model_path / "config.yml").exists() and (model_path / "latest.ckpt").exists()

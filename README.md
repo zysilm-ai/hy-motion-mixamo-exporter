@@ -41,7 +41,7 @@ Use `--model lite` or `--model full` to select. Default is `auto` (selects based
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/hy-motion-mixamo-exporter.git
+git clone https://github.com/zysilm-ai/hy-motion-mixamo-exporter.git
 cd hy-motion-mixamo-exporter
 
 # Install PyTorch with CUDA support first (if not already installed)

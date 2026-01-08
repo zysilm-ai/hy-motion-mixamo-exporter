@@ -14,6 +14,7 @@ from .config import (
     select_llm_precision,
     get_vram_gb,
     is_installed,
+    is_model_installed,
     MODELS,
     BASE_DIR,
     get_model_path,
@@ -123,8 +124,8 @@ def main(
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
 
-    # Ensure models are installed
-    if reinstall or not is_installed():
+    # Ensure models are installed (check for specific model, not just global marker)
+    if reinstall or not is_installed() or not is_model_installed(selected_model):
         try:
             ensure_installed(model_key=selected_model, force=reinstall)
         except Exception as e:

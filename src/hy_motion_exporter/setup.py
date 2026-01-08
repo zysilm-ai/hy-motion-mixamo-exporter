@@ -171,8 +171,21 @@ def ensure_installed(model_key: str = "lite", force: bool = False):
     ensure_base_directory()
     ensure_model_directory()
 
-    if is_installed() and not force:
+    # Check if just the specific model needs to be downloaded
+    model_config = MODELS[model_key]
+    model_name = model_config["name"]
+    model_dir = MODELS_DIR / "ckpts" / "tencent" / model_name
+    model_missing = not (model_dir / "config.yml").exists() or not (model_dir / "latest.ckpt").exists()
+
+    if is_installed() and not force and not model_missing:
         console.print("[green]HY-Motion is already set up.[/green]")
+        return
+
+    # If only the model is missing (other setup already done), just download the model
+    if is_installed() and not force and model_missing:
+        console.print(f"[yellow]Downloading {model_name} model...[/yellow]")
+        download_models(model_key)
+        console.print(f"[bold green]{model_name} downloaded successfully![/bold green]")
         return
 
     console.print("[bold blue]Setting up HY-Motion Exporter...[/bold blue]")
