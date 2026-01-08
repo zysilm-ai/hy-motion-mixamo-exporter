@@ -57,7 +57,7 @@ def generate_workflow(
 
     # Generate seed if not provided
     if seed is None:
-        seed = random.randint(0, 2**32 - 1)
+        seed = random.randint(0, 2**31 - 1)  # Max INT32
 
     # Default duration if not specified (will be auto-detected by LLM)
     if duration is None:
@@ -65,8 +65,17 @@ def generate_workflow(
 
     # Retargeting mode
     if character_fbx:
+        # Copy character FBX to ComfyUI input directory
+        character_path = Path(character_fbx)
+        if not character_path.exists():
+            console.print(f"[red]Character file not found: {character_fbx}[/red]")
+            return None
+        input_dir = COMFYUI_DIR / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        dest_path = input_dir / character_path.name
+        shutil.copy2(character_path, dest_path)
         retarget_mode = "custom"
-        custom_fbx_path = str(Path(character_fbx).absolute())
+        custom_fbx_path = character_path.name  # Just filename, plugin looks in input/
     else:
         retarget_mode = "wooden_boy"
         custom_fbx_path = ""
@@ -113,7 +122,7 @@ def execute_workflow(
         response = requests.post(
             f"{server_url}/prompt",
             json=prompt_data,
-            timeout=300,  # 5 minutes for first-time model loading
+            timeout=600,  # 10 minutes for first-time model loading
         )
         if response.status_code != 200:
             console.print(f"[red]Server response: {response.text}[/red]")
@@ -133,7 +142,8 @@ def execute_workflow(
     output_files: list[str] = []
 
     try:
-        ws = websocket.create_connection(ws_url, timeout=300)
+        ws = websocket.create_connection(ws_url, timeout=60)
+        ws.settimeout(30)  # 30 second timeout for each recv()
 
         with Progress(
             SpinnerColumn(),
@@ -143,10 +153,13 @@ def execute_workflow(
             console=console,
         ) as progress:
             task = progress.add_task("Generating motion...", total=100)
+            last_activity = time.time()
+            max_idle_time = 600  # 10 minutes max idle time
 
             while True:
                 try:
                     message = ws.recv()
+                    last_activity = time.time()
                     data = json.loads(message)
 
                     if data.get("type") == "progress":
@@ -175,13 +188,21 @@ def execute_workflow(
                                     output_files.append(f["filename"])
 
                 except websocket.WebSocketTimeoutException:
-                    # Check if execution is complete via REST API
-                    history = requests.get(
-                        f"{server_url}/history/{prompt_id}",
-                        timeout=10,
-                    ).json()
-                    if prompt_id in history:
+                    # Check if we've been idle too long
+                    if time.time() - last_activity > max_idle_time:
+                        console.print("[yellow]Timeout waiting for server response.[/yellow]")
                         break
+
+                    # Check if execution is complete via REST API
+                    try:
+                        history = requests.get(
+                            f"{server_url}/history/{prompt_id}",
+                            timeout=10,
+                        ).json()
+                        if prompt_id in history:
+                            break
+                    except Exception:
+                        pass  # Server might be busy, continue waiting
 
         ws.close()
 
