@@ -8,15 +8,13 @@ from typing import Literal
 
 # Base directory for all exporter data
 BASE_DIR = Path.home() / ".hy-motion-exporter"
-COMFYUI_DIR = BASE_DIR / "comfyui"
-MODELS_DIR = COMFYUI_DIR / "models" / "HY-Motion"
-PID_FILE = BASE_DIR / "comfyui.pid"
+MODELS_DIR = BASE_DIR / "models" / "HY-Motion"
 INSTALL_MARKER = BASE_DIR / ".installed"
 
 # Model configurations
 # VRAM requirements depend on LLM precision:
 #   - Motion model: Full ~8GB, Lite ~4GB
-#   - LLM: none ~16GB, int8 ~8GB, int4 ~4GB, gguf ~5GB
+#   - LLM: none ~16GB, int8 ~8GB, int4 ~4GB
 # Minimum = motion model + int4 LLM
 MODELS = {
     "full": {
@@ -47,10 +45,6 @@ LLM_PRECISIONS = {
         "vram_gb": 4,
     },
 }
-
-# ComfyUI server settings
-DEFAULT_PORT = 8188
-SERVER_HOST = "127.0.0.1"
 
 
 def get_vram_gb() -> float | None:
@@ -156,13 +150,13 @@ def ensure_base_directory():
 
 
 def ensure_model_directory():
-    """Create models directory if it doesn't exist (call after ComfyUI install)."""
+    """Create models directory if it doesn't exist."""
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def is_installed() -> bool:
-    """Check if ComfyUI and required components are installed."""
-    return INSTALL_MARKER.exists() and COMFYUI_DIR.exists()
+    """Check if required components are installed."""
+    return INSTALL_MARKER.exists() and MODELS_DIR.exists()
 
 
 def mark_installed():
@@ -170,6 +164,7 @@ def mark_installed():
     INSTALL_MARKER.touch()
 
 
-def get_server_url(port: int = DEFAULT_PORT) -> str:
-    """Get the ComfyUI server URL."""
-    return f"http://{SERVER_HOST}:{port}"
+def get_model_path(model_key: str) -> Path:
+    """Get the path to a model's checkpoint directory."""
+    model_name = MODELS[model_key]["name"]
+    return MODELS_DIR / "ckpts" / "tencent" / model_name
