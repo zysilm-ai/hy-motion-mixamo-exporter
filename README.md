@@ -37,6 +37,19 @@ A CLI tool that generates 3D character animations from text prompts using [HY-Mo
 
 Use `--model lite` or `--model full` to select. Default is `auto` (selects based on available VRAM).
 
+### Low VRAM Mode (CPU Offload)
+
+If you have limited VRAM but want to use the full model, use `--cpu-offload`:
+
+```bash
+hy-motion-export "Walking forward" -c character.fbx --model full --cpu-offload -o walk.fbx
+```
+
+This loads the text encoder (Qwen3-8B + CLIP) on CPU instead of GPU, reducing peak VRAM usage to ~3-4GB. Trade-offs:
+- Requires ~16GB system RAM
+- Text encoding is slower (runs on CPU in fp32)
+- Motion generation still runs on GPU at full speed
+
 ## Installation
 
 ```bash
@@ -132,6 +145,7 @@ hy-motion-uninstall -y
 | `--precision` | | LLM quantization: `auto`, `none`, `int8`, or `int4` (default: `auto`) |
 | `--seed` | `-s` | Random seed for reproducibility |
 | `--cfg-scale` | | Classifier-free guidance scale (default: 5.0) |
+| `--cpu-offload` | | Load text encoder on CPU to reduce VRAM (~6GB GPU + 16GB RAM) |
 | `--reinstall` | | Force redownload models |
 
 ## Examples
@@ -184,10 +198,14 @@ Text encoder models (Qwen3-8B, CLIP) are cached in `~/.cache/huggingface/`.
 
 ### "Insufficient GPU VRAM" Error
 
-Try using a smaller model or more aggressive quantization:
+Try using a smaller model, more aggressive quantization, or CPU offload:
 
 ```bash
+# Option 1: Use lite model with int4 quantization (~8GB VRAM)
 hy-motion-export "walking" -c character.fbx --model lite --precision int4
+
+# Option 2: Use CPU offload to run full model with low VRAM (~4GB VRAM, needs 16GB RAM)
+hy-motion-export "walking" -c character.fbx --model full --cpu-offload
 ```
 
 ### PyTorch Not Found or CUDA Not Available

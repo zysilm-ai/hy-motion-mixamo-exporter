@@ -37,7 +37,10 @@ class HYMotionInference:
             model_name: Model name ("HY-Motion-1.0" or "HY-Motion-1.0-Lite")
             quantization: LLM quantization ("none", "int8", "int4")
             device: Device to use ("cuda" or "cpu")
-            offload_to_cpu: Whether to offload LLM to CPU after encoding
+            offload_to_cpu: Whether to load text encoder on CPU to save VRAM.
+                           When enabled, text encoding happens on CPU first,
+                           then the encoder is unloaded before loading the
+                           motion pipeline on GPU. This reduces peak VRAM usage.
         """
         self.model_name = model_name
         self.quantization = quantization
@@ -47,6 +50,9 @@ class HYMotionInference:
         self.pipeline = None
         self.text_encoder = None
         self._loaded = False
+        self._pipeline_loaded = False
+        self._text_encoder_loaded = False
+        self._config = None
 
         # Find model path
         self.model_path = self._find_model_path()
@@ -71,17 +77,21 @@ class HYMotionInference:
             f"Model {self.model_name} not found. Please run setup first."
         )
 
-    def load(self) -> None:
-        """Load the model and text encoder."""
-        if self._loaded:
+    def _load_config(self) -> dict:
+        """Load and cache model config."""
+        if self._config is None:
+            config_path = self.model_path / "config.yml"
+            with open(config_path, "r") as f:
+                self._config = yaml.safe_load(f)
+        return self._config
+
+    def _load_pipeline(self) -> None:
+        """Load the motion pipeline to GPU."""
+        if self._pipeline_loaded:
             return
 
-        print(f"[HY-Motion] Loading model from {self.model_path}")
-
-        # Load config
-        config_path = self.model_path / "config.yml"
-        with open(config_path, "r") as f:
-            config = yaml.safe_load(f)
+        config = self._load_config()
+        print(f"[HY-Motion] Loading motion pipeline from {self.model_path}")
 
         # Import pipeline and network loaders
         from .hymotion.utils.loaders import load_object
@@ -110,41 +120,91 @@ class HYMotionInference:
         self.pipeline.to(self.device)
         self.pipeline.eval()
 
+        self._pipeline_loaded = True
         print("[HY-Motion] Pipeline loaded")
 
-        # Load text encoder with quantization
-        print(f"[HY-Motion] Loading text encoder with {self.quantization} quantization...")
-        self._load_text_encoder(config)
+    def load(self) -> None:
+        """Load the model and text encoder.
+
+        In standard mode, both pipeline and text encoder are loaded together.
+        In offload_to_cpu mode, this only loads the pipeline (text encoder is
+        loaded on-demand during encoding and then unloaded).
+        """
+        if self._loaded:
+            return
+
+        if self.offload_to_cpu:
+            # In offload mode, we load pipeline first, text encoder is loaded on-demand
+            self._load_pipeline()
+        else:
+            # Standard mode: load both pipeline and text encoder
+            self._load_pipeline()
+            print(f"[HY-Motion] Loading text encoder with {self.quantization} quantization...")
+            self._load_text_encoder_internal(use_cpu=False)
 
         self._loaded = True
         print("[HY-Motion] Model ready!")
 
-    def _load_text_encoder(self, config: dict) -> None:
-        """Load the text encoder with quantization support."""
+    def _load_text_encoder_internal(self, use_cpu: bool = False) -> None:
+        """Load the text encoder with quantization support.
+
+        Args:
+            use_cpu: If True, load text encoder on CPU instead of GPU.
+                    This uses more RAM but zero VRAM.
+        """
+        if self._text_encoder_loaded:
+            return
+
+        config = self._load_config()
         from .hymotion.network.text_encoders.text_encoder import HYTextModel
 
         text_encoder_cfg = config["train_pipeline_args"].get("text_encoder_cfg", {})
 
-        # Create text encoder with quantization
+        # Create text encoder with quantization (or CPU mode)
         self.text_encoder = HYTextModel(
             llm_type=text_encoder_cfg.get("llm_type", "qwen3"),
             max_length_llm=text_encoder_cfg.get("max_length_llm", 128),
             sentence_emb_type="clipl",
-            quantization=self.quantization if self.quantization != "none" else None,
+            quantization=self.quantization if self.quantization != "none" and not use_cpu else None,
+            use_cpu=use_cpu,
         )
 
         # Move to device (quantized models handle device mapping automatically)
-        if self.quantization == "none":
+        if not use_cpu and self.quantization == "none":
             self.text_encoder.to(self.device)
 
         self.text_encoder.eval()
+        self._text_encoder_loaded = True
 
-        # Store reference in pipeline for text encoding
-        self.pipeline.text_encoder = self.text_encoder
+        # Store reference in pipeline for text encoding (only in standard mode)
+        if self.pipeline is not None and not use_cpu:
+            self.pipeline.text_encoder = self.text_encoder
+
+    def _unload_text_encoder(self) -> None:
+        """Unload the text encoder to free memory."""
+        if self.text_encoder is not None:
+            del self.text_encoder
+            self.text_encoder = None
+            self._text_encoder_loaded = False
+
+            # Clear CUDA cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            print("[HY-Motion] Text encoder unloaded")
 
     def encode_text(self, text: str) -> Dict[str, torch.Tensor]:
         """
         Encode text prompt to conditioning tensors.
+
+        In offload_to_cpu mode:
+        1. Load text encoder on CPU (if not already loaded)
+        2. Encode text on CPU
+        3. Unload text encoder to free RAM
+        4. Move embeddings to GPU
+
+        In standard mode:
+        - Use the already-loaded text encoder on GPU
 
         Args:
             text: Text prompt describing the motion
@@ -152,18 +212,36 @@ class HYMotionInference:
         Returns:
             Dictionary with encoded text features
         """
-        self.load()
-
         text_list = [text] if isinstance(text, str) else text
 
-        with torch.no_grad():
-            vtxt_raw, ctxt_raw, ctxt_length = self.text_encoder.encode(text_list)
+        if self.offload_to_cpu:
+            # CPU offload mode: load encoder on CPU, encode, then unload
+            if not self._text_encoder_loaded:
+                print("[HY-Motion] Loading text encoder on CPU for encoding...")
+                self._load_text_encoder_internal(use_cpu=True)
 
-        # Ensure tensors are on the pipeline's device
-        pipeline_device = next(self.pipeline.parameters()).device
-        vtxt_raw = vtxt_raw.to(pipeline_device)
-        ctxt_raw = ctxt_raw.to(pipeline_device)
-        ctxt_length = ctxt_length.to(pipeline_device)
+            with torch.no_grad():
+                vtxt_raw, ctxt_raw, ctxt_length = self.text_encoder.encode(text_list)
+
+            # Unload text encoder to free RAM before loading pipeline
+            self._unload_text_encoder()
+
+            # Move embeddings to GPU (they're small, ~100-200MB)
+            vtxt_raw = vtxt_raw.to(self.device)
+            ctxt_raw = ctxt_raw.to(self.device)
+            ctxt_length = ctxt_length.to(self.device)
+        else:
+            # Standard mode: use loaded text encoder
+            self.load()
+
+            with torch.no_grad():
+                vtxt_raw, ctxt_raw, ctxt_length = self.text_encoder.encode(text_list)
+
+            # Ensure tensors are on the pipeline's device
+            pipeline_device = next(self.pipeline.parameters()).device
+            vtxt_raw = vtxt_raw.to(pipeline_device)
+            ctxt_raw = ctxt_raw.to(pipeline_device)
+            ctxt_length = ctxt_length.to(pipeline_device)
 
         return {
             "text_vec_raw": vtxt_raw,
@@ -183,6 +261,15 @@ class HYMotionInference:
         """
         Generate motion from text prompt.
 
+        In offload_to_cpu mode:
+        1. Load text encoder on CPU
+        2. Encode text
+        3. Unload text encoder
+        4. Load motion pipeline on GPU
+        5. Generate motion
+
+        This reduces peak VRAM usage significantly.
+
         Args:
             prompt: Text description of the motion
             duration: Duration in seconds (0.5 to 12.0)
@@ -199,8 +286,6 @@ class HYMotionInference:
                 - smpl_data: SMPL-H format data for export
                 - text: Original prompt
         """
-        self.load()
-
         # Validate duration
         duration = max(0.5, min(12.0, duration))
 
@@ -214,8 +299,19 @@ class HYMotionInference:
         print(f"  Seed: {seed}")
         print(f"  CFG Scale: {cfg_scale}")
 
-        # Encode text
-        hidden_state_dict = self.encode_text(prompt)
+        if self.offload_to_cpu:
+            # Offload mode: encode first (on CPU), then load pipeline (on GPU)
+            print("[HY-Motion] Using CPU offload mode for low VRAM...")
+
+            # Step 1-3: Encode text on CPU (encode_text handles load/unload)
+            hidden_state_dict = self.encode_text(prompt)
+
+            # Step 4: Load pipeline on GPU (text encoder is already unloaded)
+            self._load_pipeline()
+        else:
+            # Standard mode: load everything, then encode
+            self.load()
+            hidden_state_dict = self.encode_text(prompt)
 
         # Generate motion
         output = self.pipeline.generate(
@@ -282,6 +378,8 @@ class HYMotionInference:
             self.text_encoder = None
 
         self._loaded = False
+        self._pipeline_loaded = False
+        self._text_encoder_loaded = False
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

@@ -74,6 +74,11 @@ def progress_callback(step: int, total: int):
     help="Classifier-free guidance scale (default: 5.0)",
 )
 @click.option(
+    "--cpu-offload",
+    is_flag=True,
+    help="Load text encoder on CPU to reduce VRAM usage. Slower but works with ~6GB VRAM.",
+)
+@click.option(
     "--reinstall",
     is_flag=True,
     help="Force reinstall models",
@@ -88,6 +93,7 @@ def main(
     precision: str,
     seed: int | None,
     cfg_scale: float,
+    cpu_offload: bool,
     reinstall: bool,
 ):
     """Generate Mixamo-compatible motion from a text prompt.
@@ -136,6 +142,8 @@ def main(
     console.print()
     console.print(f'[bold]Prompt:[/bold] "{prompt}"')
     console.print(f"[dim]Duration: {duration}s, Character: {character}[/dim]")
+    if cpu_offload:
+        console.print("[dim]CPU offload: enabled (text encoder runs on CPU)[/dim]")
     console.print()
 
     try:
@@ -152,6 +160,7 @@ def main(
             model_name=model_name,
             quantization=selected_precision,
             device="cuda",
+            offload_to_cpu=cpu_offload,
         )
 
         # Generate motion with progress

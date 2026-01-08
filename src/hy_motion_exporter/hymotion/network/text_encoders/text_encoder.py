@@ -59,9 +59,11 @@ class HYTextModel(nn.Module):
         max_length_sentence_emb: int = 77,
         enable_llm_padding: bool = True,
         quantization: Optional[str] = None,  # None, "int8", "int4"
+        use_cpu: bool = False,  # Load models on CPU (for low VRAM systems)
     ) -> None:
         super().__init__()
         self.text_encoder_type = "hy_text_model"
+        self.use_cpu = use_cpu
 
         self.sentence_emb_type = sentence_emb_type
         self.sentence_emb_text_encoder = None
@@ -82,9 +84,14 @@ class HYTextModel(nn.Module):
                 max_length=self.max_length_sentence_emb,
                 **tokenizer_kwargs,
             )
+            # Load CLIP on CPU if use_cpu is enabled
+            clip_load_kwargs = {}
+            if use_cpu:
+                print("[HYTextModel] Loading CLIP on CPU")
+                clip_load_kwargs["device_map"] = "cpu"
             self.sentence_emb_text_encoder = SENTENCE_EMB_LAYOUT[sentence_emb_type][
                 "text_encoder_class"
-            ].from_pretrained(SENTENCE_EMB_LAYOUT[sentence_emb_type]["module_path"])
+            ].from_pretrained(SENTENCE_EMB_LAYOUT[sentence_emb_type]["module_path"], **clip_load_kwargs)
             self.sentence_emb_text_encoder = self.sentence_emb_text_encoder.eval().requires_grad_(False)
             self.vtxt_dim = self.sentence_emb_text_encoder.config.hidden_size
 
@@ -103,9 +110,14 @@ class HYTextModel(nn.Module):
                 padding_side="right",
             )
 
-            # Configure quantization
+            # Configure quantization and device mapping
             load_kwargs = {"low_cpu_mem_usage": True}
-            if quantization == "int8":
+            if use_cpu:
+                # CPU mode: load in fp32 on CPU (no quantization - BnB requires GPU)
+                print("[HYTextModel] Loading LLM on CPU (fp32, no quantization)")
+                load_kwargs["device_map"] = "cpu"
+                load_kwargs["torch_dtype"] = torch.float32
+            elif quantization == "int8":
                 print(f"[HYTextModel] Loading LLM with INT8 quantization")
                 quantization_config = BitsAndBytesConfig(load_in_8bit=True)
                 load_kwargs["quantization_config"] = quantization_config
