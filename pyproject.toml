@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hy-motion-mixamo-exporter"
-version = "0.1.0"
+version = "0.2.0"
 description = "CLI tool to generate Mixamo-compatible motion from text prompts using HY-Motion 1.0"
 readme = "README.md"
 license = {text = "MIT"}
@@ -29,8 +29,15 @@ dependencies = [
     "requests>=2.28",
     "psutil>=5.9",
     "rich>=13.0",
-    "websocket-client>=1.6",
     "huggingface_hub>=0.20",
+    "torch>=2.0",
+    "transformers>=4.40",
+    "bitsandbytes>=0.43",
+    "accelerate>=0.30",
+    "scipy>=1.10",
+    "pyyaml>=6.0",
+    "numpy>=1.24",
+    "torchdiffeq>=0.2.0",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +48,6 @@ dev = [
 
 [project.scripts]
 hy-motion-export = "hy_motion_exporter.cli:main"
-hy-motion-stop = "hy_motion_exporter.cli:stop"
 hy-motion-uninstall = "hy_motion_exporter.cli:uninstall"
 
 [project.urls]
@@ -50,3 +56,9 @@ Repository = "https://github.com/hy-motion-mixamo-exporter"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+hy_motion_exporter = [
+    "assets/**/*",
+    "hymotion/**/*",
+]

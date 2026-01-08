@@ -1,4 +1,4 @@
-"""Auto-installation logic for ComfyUI and HY-Motion plugin."""
+"""Auto-installation logic for HY-Motion models and dependencies."""
 
 import subprocess
 import sys
@@ -9,7 +9,6 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from .config import (
-    COMFYUI_DIR,
     MODELS_DIR,
     BASE_DIR,
     MODELS,
@@ -48,60 +47,6 @@ def run_command(
         return result
 
 
-def ensure_comfy_cli():
-    """Ensure comfy-cli is installed."""
-    if shutil.which("comfy"):
-        return
-
-    console.print("[yellow]Installing comfy-cli...[/yellow]")
-    run_command(
-        [sys.executable, "-m", "pip", "install", "comfy-cli"],
-        "Installing comfy-cli",
-    )
-
-
-def is_comfyui_actually_installed() -> bool:
-    """Check if ComfyUI is actually installed (not just directory exists)."""
-    main_py = COMFYUI_DIR / "main.py"
-    return main_py.exists()
-
-
-def install_comfyui():
-    """Install ComfyUI to the workspace directory."""
-    console.print(f"[yellow]Installing ComfyUI to {COMFYUI_DIR}...[/yellow]")
-
-    # Use comfy-cli to install with --skip-prompt for non-interactive mode
-    # Include ComfyUI-Manager since we need it for node installation
-    run_command(
-        [
-            "comfy",
-            "--skip-prompt",
-            f"--workspace={COMFYUI_DIR}",
-            "install",
-            "--nvidia",  # Assume NVIDIA GPU
-        ],
-        "Installing ComfyUI (this may take a few minutes)",
-    )
-
-
-def install_hy_motion_plugin():
-    """Install the ComfyUI-HY-Motion1 plugin."""
-    console.print("[yellow]Installing HY-Motion plugin...[/yellow]")
-
-    # Install the plugin using comfy-cli with GitHub URL
-    run_command(
-        [
-            "comfy",
-            "--skip-prompt",
-            f"--workspace={COMFYUI_DIR}",
-            "node",
-            "install",
-            "https://github.com/jtydhr88/ComfyUI-HY-Motion1",
-        ],
-        "Installing HY-Motion plugin",
-    )
-
-
 def install_fbxsdkpy():
     """Install fbxsdkpy for FBX export with Mixamo retargeting."""
     console.print("[yellow]Installing fbxsdkpy for FBX export...[/yellow]")
@@ -122,6 +67,7 @@ def install_fbxsdkpy():
             "Installing fbxsdkpy",
             check=False,  # Don't fail if this doesn't work
         )
+        console.print("[green]fbxsdkpy installed successfully.[/green]")
     except Exception:
         console.print(
             "[yellow]Warning:[/yellow] fbxsdkpy installation failed. "
@@ -137,10 +83,15 @@ def download_models(model_key: str):
     model_config = MODELS[model_key]
     model_name = model_config["name"]
 
+    # Check if already downloaded
+    model_dir = MODELS_DIR / "ckpts" / "tencent" / model_name
+    if model_dir.exists() and (model_dir / "config.yml").exists():
+        console.print(f"[green]{model_name} already downloaded.[/green]")
+        return
+
     console.print(f"[yellow]Downloading {model_name} model weights...[/yellow]")
 
     # Create the model directory
-    model_dir = MODELS_DIR / "ckpts" / "tencent" / model_name
     model_dir.mkdir(parents=True, exist_ok=True)
 
     # Use huggingface_hub Python API (avoids Windows encoding issues with CLI)
@@ -166,71 +117,112 @@ def download_models(model_key: str):
         console.print("Models will be downloaded automatically on first use.")
 
 
-def download_text_encoder():
-    """Download the text encoder model (Qwen3-8B or CLIP)."""
-    console.print("[yellow]Text encoder will be downloaded on first use.[/yellow]")
-    # The ComfyUI plugin handles this automatically
+def check_pytorch_installed() -> bool:
+    """Check if PyTorch is installed with CUDA support."""
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except ImportError:
+        return False
 
 
-def ensure_comfyui_installed(model_key: str = "lite", force: bool = False):
-    """Ensure ComfyUI and all required components are installed.
+def check_transformers_installed() -> bool:
+    """Check if transformers is installed."""
+    try:
+        import transformers
+        return True
+    except ImportError:
+        return False
+
+
+def install_dependencies():
+    """Install required Python dependencies."""
+    deps_to_install = []
+
+    # Check PyTorch
+    if not check_pytorch_installed():
+        console.print("[yellow]PyTorch not found or CUDA not available.[/yellow]")
+        console.print("Please install PyTorch with CUDA support from https://pytorch.org/")
+        console.print("Example: pip install torch --index-url https://download.pytorch.org/whl/cu124")
+        raise RuntimeError("PyTorch with CUDA support is required")
+
+    # Check transformers
+    if not check_transformers_installed():
+        deps_to_install.append("transformers>=4.40")
+        deps_to_install.append("accelerate>=0.30")
+        deps_to_install.append("bitsandbytes>=0.43")
+
+    # Install missing dependencies
+    if deps_to_install:
+        console.print("[yellow]Installing required dependencies...[/yellow]")
+        run_command(
+            [sys.executable, "-m", "pip", "install"] + deps_to_install,
+            "Installing dependencies",
+        )
+
+
+def ensure_installed(model_key: str = "lite", force: bool = False):
+    """Ensure all required components are installed.
 
     Args:
         model_key: Which model to download ("full" or "lite")
         force: Force reinstallation even if already installed
     """
-    # Only create base directory before ComfyUI install
     ensure_base_directory()
+    ensure_model_directory()
 
     if is_installed() and not force:
-        console.print("[green]ComfyUI is already installed.[/green]")
+        console.print("[green]HY-Motion is already set up.[/green]")
         return
 
     console.print("[bold blue]Setting up HY-Motion Exporter...[/bold blue]")
     console.print(f"Installation directory: {BASE_DIR}")
     console.print()
 
-    # Step 1: Install comfy-cli
-    ensure_comfy_cli()
+    # Step 1: Check/install dependencies
+    install_dependencies()
 
-    # Step 2: Install ComfyUI (comfy-cli will create the directory)
-    if not is_comfyui_actually_installed() or force:
-        install_comfyui()
-
-    # Now that ComfyUI is installed, create model directory
-    ensure_model_directory()
-
-    # Step 3: Install HY-Motion plugin
-    install_hy_motion_plugin()
-
-    # Step 4: Install fbxsdkpy
+    # Step 2: Install fbxsdkpy
     install_fbxsdkpy()
 
-    # Step 5: Download models
+    # Step 3: Download models
     download_models(model_key)
 
-    # Step 6: Note about text encoder
-    download_text_encoder()
+    # Step 4: Note about text encoder
+    console.print("[yellow]Text encoder (Qwen3-8B + CLIP) will be downloaded on first use.[/yellow]")
 
     # Mark installation complete
     mark_installed()
 
     console.print()
-    console.print("[bold green]Installation complete![/bold green]")
+    console.print("[bold green]Setup complete![/bold green]")
 
 
 def check_installation_status() -> dict:
     """Check the status of all installed components."""
     status = {
         "base_dir_exists": BASE_DIR.exists(),
-        "comfyui_installed": COMFYUI_DIR.exists(),
         "install_marker": is_installed(),
-        "comfy_cli_available": shutil.which("comfy") is not None,
+        "pytorch_available": check_pytorch_installed(),
+        "transformers_available": check_transformers_installed(),
     }
 
     # Check for model files
     for model_key, model_config in MODELS.items():
         model_dir = MODELS_DIR / "ckpts" / "tencent" / model_config["name"]
-        status[f"model_{model_key}_downloaded"] = model_dir.exists()
+        config_exists = (model_dir / "config.yml").exists()
+        ckpt_exists = (model_dir / "latest.ckpt").exists()
+        status[f"model_{model_key}_downloaded"] = config_exists and ckpt_exists
+
+    # Check fbxsdkpy
+    try:
+        import fbx
+        status["fbxsdkpy_available"] = True
+    except ImportError:
+        status["fbxsdkpy_available"] = False
 
     return status
+
+
+# Keep old function name for backwards compatibility
+ensure_comfyui_installed = ensure_installed

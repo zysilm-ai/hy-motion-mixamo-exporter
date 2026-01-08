@@ -6,14 +6,27 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
 from . import __version__
-from .config import select_model, select_llm_precision, get_vram_gb, DEFAULT_PORT, is_installed, LLM_PRECISIONS
-from .setup import ensure_comfyui_installed
-from .server import get_server
-from .workflow import generate_workflow, execute_workflow
+from .config import (
+    select_model,
+    select_llm_precision,
+    get_vram_gb,
+    is_installed,
+    MODELS,
+    BASE_DIR,
+    get_model_path,
+)
+from .setup import ensure_installed
 
 console = Console(force_terminal=False, legacy_windows=True)
+
+
+def progress_callback(step: int, total: int):
+    """Progress callback for generation."""
+    # This is called during generation steps
+    pass
 
 
 @click.command()
@@ -27,12 +40,12 @@ console = Console(force_terminal=False, legacy_windows=True)
 @click.option(
     "--character", "-c",
     type=click.Path(exists=True),
-    required=True,
-    help="Mixamo character FBX file (required). Download from mixamo.com",
+    help="Mixamo character FBX file for retargeting (optional)",
 )
 @click.option(
     "--duration", "-d",
     type=float,
+    default=3.0,
     help="Motion duration in seconds, 0.5-12.0 (default: 3.0)",
 )
 @click.option(
@@ -53,32 +66,26 @@ console = Console(force_terminal=False, legacy_windows=True)
     help="Random seed for reproducibility",
 )
 @click.option(
-    "--port", "-p",
-    type=int,
-    default=DEFAULT_PORT,
-    help="ComfyUI server port",
-)
-@click.option(
-    "--keep-server",
-    is_flag=True,
-    help="Keep ComfyUI server running after generation",
+    "--cfg-scale",
+    type=float,
+    default=5.0,
+    help="Classifier-free guidance scale (default: 5.0)",
 )
 @click.option(
     "--reinstall",
     is_flag=True,
-    help="Force reinstall ComfyUI and plugins",
+    help="Force reinstall models",
 )
 @click.version_option(version=__version__)
 def main(
     prompt: str,
     output: str,
     character: str | None,
-    duration: float | None,
+    duration: float,
     model: str,
     precision: str,
     seed: int | None,
-    port: int,
-    keep_server: bool,
+    cfg_scale: float,
     reinstall: bool,
 ):
     """Generate Mixamo-compatible motion from a text prompt.
@@ -88,9 +95,9 @@ def main(
     Examples:
 
     \b
-      hy-motion-export "A person walks forward" -c character.fbx
+      hy-motion-export "A person walks forward" -o walk.fbx
       hy-motion-export "Dancing happily" -c character.fbx -o dance.fbx
-      hy-motion-export "Running" -c character.fbx -d 5.0 --keep-server
+      hy-motion-export "Running" -d 5.0 -o running.fbx
     """
     console.print(f"[bold blue]HY-Motion Mixamo Exporter v{__version__}[/bold blue]")
     console.print()
@@ -112,66 +119,89 @@ def main(
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
 
-    # Ensure ComfyUI is installed
+    # Ensure models are installed
     if reinstall or not is_installed():
         try:
-            ensure_comfyui_installed(model_key=selected_model, force=reinstall)
+            ensure_installed(model_key=selected_model, force=reinstall)
         except Exception as e:
-            console.print(f"[red]Installation failed: {e}[/red]")
+            console.print(f"[red]Setup failed: {e}[/red]")
             sys.exit(1)
 
-    # Start the server
-    server = get_server(port)
-    if not server.start():
-        console.print("[red]Failed to start ComfyUI server.[/red]")
-        sys.exit(1)
+    # Print generation info
+    console.print()
+    console.print(f'[bold]Prompt:[/bold] "{prompt}"')
+    console.print(f"[dim]Duration: {duration}s[/dim]")
+    if character:
+        console.print(f"[dim]Character: {character}[/dim]")
+    console.print()
 
     try:
-        # Generate workflow
-        console.print()
-        console.print(f'[bold]Prompt:[/bold] "{prompt}"')
-        if duration:
-            console.print(f"[dim]Duration: {duration}s[/dim]")
-        if character:
-            console.print(f"[dim]Character: {character}[/dim]")
-        console.print()
+        # Import inference module (delayed to avoid slow imports on help)
+        from .inference import HYMotionInference
+        from .export import export_fbx, check_fbx_available
 
-        workflow = generate_workflow(
-            prompt=prompt,
-            duration=duration,
-            character_fbx=character,
-            model=selected_model,
-            llm_precision=selected_precision,
-            seed=seed,
-            filename_prefix=output_path.stem,
-        )
-
-        # Execute workflow
-        result_path = execute_workflow(
-            workflow=workflow,
-            server_url=server.url,
-            output_dir=output_path.parent,
-        )
-
-        if result_path:
-            # Rename to desired output name if different
-            if result_path.name != output_path.name:
-                final_path = output_path.parent / output_path.name
-                if final_path.exists():
-                    final_path.unlink()
-                shutil.move(result_path, final_path)
-                result_path = final_path
-
+        # Check FBX availability
+        if not check_fbx_available():
+            console.print("[yellow]Warning: fbxsdkpy not installed. FBX export may fail.[/yellow]")
+            console.print("[yellow]Install with: pip install fbxsdkpy --extra-index-url https://gitlab.inria.fr/api/v4/projects/18692/packages/pypi/simple[/yellow]")
             console.print()
-            console.print(f"[bold green]Success![/bold green] Output saved to: {result_path}")
-        else:
-            console.print("[red]Failed to generate motion.[/red]")
-            sys.exit(1)
 
-    finally:
-        # Stop server unless keep-server is set
-        if not keep_server:
-            server.stop()
+        # Initialize inference
+        model_path = get_model_path(selected_model)
+        model_name = MODELS[selected_model]["name"]
+
+        console.print("[yellow]Loading model...[/yellow]")
+        inference = HYMotionInference(
+            model_name=model_name,
+            quantization=selected_precision,
+            device="cuda",
+        )
+
+        # Generate motion with progress
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            console=console,
+            transient=True,
+        ) as progress:
+            task = progress.add_task("Generating motion...", total=50)
+
+            def update_progress(step, total):
+                progress.update(task, completed=step, total=total)
+
+            motion_data = inference.generate(
+                prompt=prompt,
+                duration=duration,
+                seed=seed,
+                cfg_scale=cfg_scale,
+                progress_callback=update_progress,
+            )
+
+        # Export to FBX
+        console.print("[yellow]Exporting FBX...[/yellow]")
+        result_path = export_fbx(
+            motion_data=motion_data,
+            output_path=str(output_path),
+            character_fbx=character,
+        )
+
+        console.print()
+        console.print(f"[bold green]Success![/bold green] Output saved to: {result_path}")
+
+        # Cleanup
+        inference.unload()
+
+    except ImportError as e:
+        console.print(f"[red]Import error: {e}[/red]")
+        console.print("[yellow]Please ensure PyTorch and transformers are installed.[/yellow]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 
 @click.command()
@@ -190,28 +220,12 @@ def status():
 
 @click.command()
 @click.option(
-    "--port", "-p",
-    type=int,
-    default=DEFAULT_PORT,
-    help="ComfyUI server port",
-)
-def stop(port: int):
-    """Stop the ComfyUI server and free VRAM."""
-    server = get_server(port)
-    server.stop()
-
-
-@click.command()
-@click.option(
     "--yes", "-y",
     is_flag=True,
     help="Skip confirmation prompt",
 )
 def uninstall(yes: bool):
-    """Uninstall ComfyUI and all downloaded models."""
-    from .config import BASE_DIR, INSTALL_MARKER
-    import shutil
-
+    """Uninstall HY-Motion models and cached data."""
     if not BASE_DIR.exists():
         console.print("[yellow]Nothing to uninstall. HY-Motion Exporter is not installed.[/yellow]")
         return
@@ -233,11 +247,6 @@ def uninstall(yes: bool):
             console.print("[yellow]Uninstall cancelled.[/yellow]")
             return
 
-    # Stop server first
-    console.print("[yellow]Stopping server...[/yellow]")
-    server = get_server(DEFAULT_PORT)
-    server.stop()
-
     # Delete the directory
     console.print("[yellow]Removing files...[/yellow]")
     try:
@@ -246,17 +255,6 @@ def uninstall(yes: bool):
     except Exception as e:
         console.print(f"[red]Failed to remove some files: {e}[/red]")
         console.print(f"[yellow]Please manually delete: {BASE_DIR}[/yellow]")
-
-
-@click.group()
-def cli():
-    """HY-Motion Mixamo Exporter - Generate motion from text."""
-    pass
-
-
-cli.add_command(main, name="generate")
-cli.add_command(status)
-cli.add_command(stop)
 
 
 # Allow running as `hy-motion-export "prompt"` directly
