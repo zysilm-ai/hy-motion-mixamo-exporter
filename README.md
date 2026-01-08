@@ -11,45 +11,6 @@ A CLI tool that generates 3D character animations from text prompts using [HY-Mo
 - GPU VRAM auto-detection for optimal model selection
 - BitsAndBytes quantization for lower VRAM usage
 
-## Requirements
-
-- **Python**: 3.10 or higher
-- **GPU**: NVIDIA GPU with CUDA support
-- **VRAM**: Minimum 8GB (for Lite model with int4 quantization)
-- **OS**: Windows, Linux, or macOS
-
-### Model Variants
-
-| Model | Parameters | Description |
-|-------|------------|-------------|
-| `lite` | 0.46B | Faster, lower VRAM, good quality |
-| `full` | 1B | Higher quality, requires more VRAM |
-
-### VRAM Requirements
-
-| Model | LLM Precision | Minimum VRAM |
-|-------|---------------|--------------|
-| Lite  | int4          | ~8GB         |
-| Lite  | int8          | ~12GB        |
-| Full  | int4          | ~12GB        |
-| Full  | int8          | ~16GB        |
-| Full  | none (fp16)   | ~24GB        |
-
-Use `--model lite` or `--model full` to select. Default is `auto` (selects based on available VRAM).
-
-### Low VRAM Mode (CPU Offload)
-
-If you have limited VRAM but want to use the full model, use `--cpu-offload`:
-
-```bash
-hy-motion-export "Walking forward" -c character.fbx --model full --cpu-offload -o walk.fbx
-```
-
-This loads the text encoder (Qwen3-8B + CLIP) on CPU instead of GPU, reducing peak VRAM usage to ~3-4GB. Trade-offs:
-- Requires ~16GB system RAM
-- Text encoding is slower (runs on CPU in fp32)
-- Motion generation still runs on GPU at full speed
-
 ## Installation
 
 ```bash
@@ -169,6 +130,45 @@ hy-motion-export "Sitting down on the ground" -c character.fbx -o sit.fbx
 # Waving
 hy-motion-export "Standing and waving hello with right hand" -c character.fbx -o wave.fbx
 ```
+
+## Requirements
+
+- **Python**: 3.10 or higher
+- **GPU**: NVIDIA GPU with CUDA support
+- **VRAM**: Minimum 8GB (for Lite model with int4 quantization)
+- **OS**: Windows, Linux, or macOS
+
+### Model Variants
+
+| Model | Parameters | Description |
+|-------|------------|-------------|
+| `lite` | 0.46B | Faster, lower VRAM, good quality |
+| `full` | 1B | Higher quality, requires more VRAM |
+
+### VRAM Requirements
+
+| Model | LLM Precision | Minimum VRAM |
+|-------|---------------|--------------|
+| Lite  | int4          | ~8GB         |
+| Lite  | int8          | ~12GB        |
+| Full  | int4          | ~12GB        |
+| Full  | int8          | ~16GB        |
+| Full  | none (fp16)   | ~24GB        |
+
+Use `--model lite` or `--model full` to select. Default is `auto` (selects based on available VRAM).
+
+### Low VRAM Mode (CPU Offload)
+
+If you have limited VRAM but want to use the full model, use `--cpu-offload`:
+
+```bash
+hy-motion-export "Walking forward" -c character.fbx --model full --cpu-offload -o walk.fbx
+```
+
+This loads the text encoder (Qwen3-8B + CLIP) on CPU instead of GPU, reducing peak VRAM usage to ~3-4GB. Trade-offs:
+- Requires ~16GB system RAM
+- Text encoding is slower (runs on CPU in fp32)
+- Motion generation still runs on GPU at full speed
 
 ## How It Works
 
