@@ -1,2 +1,0 @@
-[console_scripts]
-hy-motion-export = hy_motion_exporter.cli:main

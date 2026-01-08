@@ -173,6 +173,8 @@ class ComfyUIServer:
 
     def stop(self):
         """Stop the ComfyUI server."""
+        stopped = False
+
         # First try to stop our own process
         if self.process is not None:
             try:
@@ -181,10 +183,12 @@ class ComfyUIServer:
                 else:
                     os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
                 self.process.wait(timeout=10)
+                stopped = True
             except Exception:
                 # Force kill if graceful shutdown fails
                 try:
                     self.process.kill()
+                    stopped = True
                 except Exception:
                     pass
             self.process = None
@@ -196,11 +200,28 @@ class ComfyUIServer:
                 proc = psutil.Process(pid)
                 proc.terminate()
                 proc.wait(timeout=10)
+                stopped = True
             except (psutil.NoSuchProcess, psutil.TimeoutExpired):
                 pass
 
+        # Find and kill process by port if still running
+        if not stopped or self._is_port_in_use():
+            for conn in psutil.net_connections(kind="inet"):
+                if conn.laddr.port == self.port and conn.status == "LISTEN":
+                    try:
+                        proc = psutil.Process(conn.pid)
+                        proc.terminate()
+                        proc.wait(timeout=10)
+                        stopped = True
+                    except (psutil.NoSuchProcess, psutil.TimeoutExpired, psutil.AccessDenied):
+                        pass
+                    break
+
         self._remove_pid_file()
-        console.print("[yellow]ComfyUI server stopped.[/yellow]")
+        if stopped:
+            console.print("[green]ComfyUI server stopped. VRAM freed.[/green]")
+        else:
+            console.print("[yellow]No ComfyUI server was running.[/yellow]")
 
     def _cleanup(self):
         """Cleanup handler called on exit."""

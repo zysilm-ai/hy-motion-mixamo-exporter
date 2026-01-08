@@ -40,6 +40,8 @@ dev = [
 
 [project.scripts]
 hy-motion-export = "hy_motion_exporter.cli:main"
+hy-motion-stop = "hy_motion_exporter.cli:stop"
+hy-motion-uninstall = "hy_motion_exporter.cli:uninstall"
 
 [project.urls]
 Homepage = "https://github.com/hy-motion-mixamo-exporter"

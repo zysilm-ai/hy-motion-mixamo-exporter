@@ -106,6 +106,27 @@ hy-motion-export "Your motion description" \
     --keep-server
 ```
 
+### Stop Server and Free VRAM
+
+After generation, models stay in VRAM for faster subsequent runs. To free VRAM:
+
+```bash
+# Stop the server and unload models
+hy-motion-stop
+```
+
+### Uninstall
+
+To remove ComfyUI and all downloaded models (~10-15GB):
+
+```bash
+# Interactive uninstall (asks for confirmation)
+hy-motion-uninstall
+
+# Skip confirmation
+hy-motion-uninstall -y
+```
+
 ## CLI Options
 
 | Option | Short | Description |

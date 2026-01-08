@@ -187,6 +187,66 @@ def status():
         console.print(f"  {key}: {icon}")
 
 
+@click.command()
+@click.option(
+    "--port", "-p",
+    type=int,
+    default=DEFAULT_PORT,
+    help="ComfyUI server port",
+)
+def stop(port: int):
+    """Stop the ComfyUI server and free VRAM."""
+    server = get_server(port)
+    server.stop()
+
+
+@click.command()
+@click.option(
+    "--yes", "-y",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+def uninstall(yes: bool):
+    """Uninstall ComfyUI and all downloaded models."""
+    from .config import BASE_DIR, INSTALL_MARKER
+    import shutil
+
+    if not BASE_DIR.exists():
+        console.print("[yellow]Nothing to uninstall. HY-Motion Exporter is not installed.[/yellow]")
+        return
+
+    # Show what will be deleted
+    console.print(f"[bold]This will delete:[/bold]")
+    console.print(f"  {BASE_DIR}")
+    console.print()
+
+    # Calculate size
+    total_size = sum(f.stat().st_size for f in BASE_DIR.rglob('*') if f.is_file())
+    size_gb = total_size / (1024 ** 3)
+    console.print(f"[dim]Total size: {size_gb:.2f} GB[/dim]")
+    console.print()
+
+    if not yes:
+        confirm = click.confirm("Are you sure you want to uninstall?", default=False)
+        if not confirm:
+            console.print("[yellow]Uninstall cancelled.[/yellow]")
+            return
+
+    # Stop server first
+    console.print("[yellow]Stopping server...[/yellow]")
+    server = get_server(DEFAULT_PORT)
+    server.stop()
+
+    # Delete the directory
+    console.print("[yellow]Removing files...[/yellow]")
+    try:
+        shutil.rmtree(BASE_DIR)
+        console.print("[green]Uninstall complete. All files removed.[/green]")
+    except Exception as e:
+        console.print(f"[red]Failed to remove some files: {e}[/red]")
+        console.print(f"[yellow]Please manually delete: {BASE_DIR}[/yellow]")
+
+
 @click.group()
 def cli():
     """HY-Motion Mixamo Exporter - Generate motion from text."""
@@ -195,6 +255,7 @@ def cli():
 
 cli.add_command(main, name="generate")
 cli.add_command(status)
+cli.add_command(stop)
 
 
 # Allow running as `hy-motion-export "prompt"` directly
