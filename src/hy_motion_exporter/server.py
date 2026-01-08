@@ -20,7 +20,7 @@ from .config import (
     get_server_url,
 )
 
-console = Console()
+console = Console(force_terminal=False, legacy_windows=True)
 
 
 class ComfyUIServer:
@@ -70,7 +70,7 @@ class ComfyUIServer:
             PID_FILE.unlink()
 
     def _wait_for_ready(self, timeout: int = 120) -> bool:
-        """Wait for the server to become ready.
+        """Wait for the server to become fully ready.
 
         Args:
             timeout: Maximum seconds to wait
@@ -81,7 +81,16 @@ class ComfyUIServer:
         start_time = time.time()
         while time.time() - start_time < timeout:
             if self.is_running():
-                return True
+                # Server responds, but wait for full initialization
+                # Check that queue endpoint also works (indicates full readiness)
+                try:
+                    response = requests.get(f"{self.url}/queue", timeout=5)
+                    if response.status_code == 200:
+                        # Add warmup delay to ensure ComfyUI-Manager is fully loaded
+                        time.sleep(3)
+                        return True
+                except requests.RequestException:
+                    pass
             time.sleep(1)
         return False
 

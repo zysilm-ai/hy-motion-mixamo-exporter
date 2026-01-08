@@ -19,7 +19,7 @@ from .config import (
     mark_installed,
 )
 
-console = Console()
+console = Console(force_terminal=False, legacy_windows=True)
 
 
 def run_command(

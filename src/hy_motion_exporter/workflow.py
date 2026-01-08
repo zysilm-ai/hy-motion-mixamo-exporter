@@ -15,7 +15,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
 from .config import COMFYUI_DIR, MODELS
 
-console = Console()
+# Use ASCII-safe console to avoid Windows encoding issues
+console = Console(force_terminal=False, legacy_windows=True)
 
 # Path to workflow template
 WORKFLOW_TEMPLATE_PATH = Path(__file__).parent / "workflows" / "text_to_mixamo.json"
@@ -59,26 +60,25 @@ def generate_workflow(
     if seed is None:
         seed = random.randint(0, 2**31 - 1)  # Max INT32
 
-    # Default duration if not specified (will be auto-detected by LLM)
+    # Default duration if not specified (node requires 0.5-12.0 seconds)
     if duration is None:
-        duration = 0  # 0 means auto-detect
+        duration = 3.0  # Default to 3 seconds
 
-    # Retargeting mode
-    if character_fbx:
-        # Copy character FBX to ComfyUI input directory
-        character_path = Path(character_fbx)
-        if not character_path.exists():
-            console.print(f"[red]Character file not found: {character_fbx}[/red]")
-            return None
-        input_dir = COMFYUI_DIR / "input"
-        input_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = input_dir / character_path.name
-        shutil.copy2(character_path, dest_path)
-        retarget_mode = "custom"
-        custom_fbx_path = character_path.name  # Just filename, plugin looks in input/
-    else:
-        retarget_mode = "wooden_boy"
-        custom_fbx_path = ""
+    # Character FBX is required for Mixamo retargeting
+    if not character_fbx:
+        console.print("[red]Character FBX file is required. Download from mixamo.com[/red]")
+        return None
+
+    # Copy character FBX to ComfyUI input directory
+    character_path = Path(character_fbx)
+    if not character_path.exists():
+        console.print(f"[red]Character file not found: {character_fbx}[/red]")
+        return None
+    input_dir = COMFYUI_DIR / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = input_dir / character_path.name
+    shutil.copy2(character_path, dest_path)
+    custom_fbx_path = character_path.name  # Just filename, plugin looks in input/
 
     # Modify workflow values directly
     workflow["1"]["inputs"]["quantization"] = llm_precision  # "none", "int8", or "int4"
@@ -145,70 +145,61 @@ def execute_workflow(
         ws = websocket.create_connection(ws_url, timeout=60)
         ws.settimeout(30)  # 30 second timeout for each recv()
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("{task.percentage:>3.0f}%"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Generating motion...", total=100)
-            last_activity = time.time()
-            max_idle_time = 600  # 10 minutes max idle time
+        print("Generating motion...", end="", flush=True)
+        last_activity = time.time()
+        max_idle_time = 600  # 10 minutes max idle time
+        last_node = None
 
-            while True:
-                try:
-                    message = ws.recv()
-                    last_activity = time.time()
-                    data = json.loads(message)
+        while True:
+            try:
+                message = ws.recv()
+                last_activity = time.time()
+                data = json.loads(message)
 
-                    if data.get("type") == "progress":
-                        value = data["data"].get("value", 0)
-                        max_value = data["data"].get("max", 100)
-                        percentage = (value / max_value) * 100 if max_value > 0 else 0
-                        progress.update(task, completed=percentage)
-
-                    elif data.get("type") == "executing":
-                        node = data["data"].get("node")
-                        if node:
-                            progress.update(task, description=f"Executing node {node}...")
-                        elif data["data"].get("prompt_id") == prompt_id:
-                            # Execution complete
-                            progress.update(task, completed=100)
-                            break
-
-                    elif data.get("type") == "executed":
-                        node_output = data["data"].get("output", {})
-                        # Check for FBX output files
-                        if "fbx_files" in node_output:
-                            output_files.extend(node_output["fbx_files"])
-                        elif "files" in node_output:
-                            for f in node_output["files"]:
-                                if f.get("filename", "").endswith(".fbx"):
-                                    output_files.append(f["filename"])
-
-                except websocket.WebSocketTimeoutException:
-                    # Check if we've been idle too long
-                    if time.time() - last_activity > max_idle_time:
-                        console.print("[yellow]Timeout waiting for server response.[/yellow]")
+                if data.get("type") == "executing":
+                    node = data["data"].get("node")
+                    if node and node != last_node:
+                        print(".", end="", flush=True)
+                        last_node = node
+                    elif data["data"].get("prompt_id") == prompt_id:
+                        # Execution complete
+                        print(" Done!")
                         break
 
-                    # Check if execution is complete via REST API
-                    try:
-                        history = requests.get(
-                            f"{server_url}/history/{prompt_id}",
-                            timeout=10,
-                        ).json()
-                        if prompt_id in history:
-                            break
-                    except Exception:
-                        pass  # Server might be busy, continue waiting
+                elif data.get("type") == "executed":
+                    node_output = data["data"].get("output", {})
+                    # Check for FBX output files
+                    if "fbx_files" in node_output:
+                        output_files.extend(node_output["fbx_files"])
+                    elif "files" in node_output:
+                        for f in node_output["files"]:
+                            if f.get("filename", "").endswith(".fbx"):
+                                output_files.append(f["filename"])
+
+            except websocket.WebSocketTimeoutException:
+                print(".", end="", flush=True)
+                # Check if we've been idle too long
+                if time.time() - last_activity > max_idle_time:
+                    print("\nTimeout waiting for server response.")
+                    break
+
+                # Check if execution is complete via REST API
+                try:
+                    history = requests.get(
+                        f"{server_url}/history/{prompt_id}",
+                        timeout=10,
+                    ).json()
+                    if prompt_id in history:
+                        print(" Done!")
+                        break
+                except Exception:
+                    pass  # Server might be busy, continue waiting
 
         ws.close()
 
     except Exception as e:
-        console.print(f"[yellow]WebSocket monitoring failed: {e}[/yellow]")
-        console.print("[yellow]Falling back to polling...[/yellow]")
+        print(f"\nWebSocket monitoring failed: {e}")
+        print("Falling back to polling...")
 
         # Fallback: poll the history endpoint
         output_files = _poll_for_completion(server_url, prompt_id)

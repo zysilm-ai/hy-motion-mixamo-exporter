@@ -13,7 +13,7 @@ from .setup import ensure_comfyui_installed
 from .server import get_server
 from .workflow import generate_workflow, execute_workflow
 
-console = Console()
+console = Console(force_terminal=False, legacy_windows=True)
 
 
 @click.command()
@@ -26,13 +26,14 @@ console = Console()
 )
 @click.option(
     "--character", "-c",
-    type=click.Path(),
-    help="Custom Mixamo character FBX for retargeting (path relative to ComfyUI input/ or absolute)",
+    type=click.Path(exists=True),
+    required=True,
+    help="Mixamo character FBX file (required). Download from mixamo.com",
 )
 @click.option(
     "--duration", "-d",
     type=float,
-    help="Motion duration in seconds (auto-detected if not set)",
+    help="Motion duration in seconds, 0.5-12.0 (default: 3.0)",
 )
 @click.option(
     "--model", "-m",
@@ -87,9 +88,9 @@ def main(
     Examples:
 
     \b
-      hy-motion-export "A person walks forward and waves"
-      hy-motion-export "Dancing happily" -o dance.fbx
-      hy-motion-export "Running" -c my_character.fbx -d 5.0
+      hy-motion-export "A person walks forward" -c character.fbx
+      hy-motion-export "Dancing happily" -c character.fbx -o dance.fbx
+      hy-motion-export "Running" -c character.fbx -d 5.0 --keep-server
     """
     console.print(f"[bold blue]HY-Motion Mixamo Exporter v{__version__}[/bold blue]")
     console.print()
