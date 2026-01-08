@@ -69,9 +69,21 @@ hy-motion-export "A person jumps and waves" -o jumping.fbx
 
 ### With Custom Mixamo Character
 
+Download character models from [Mixamo](https://www.mixamo.com/#/?page=1&type=Character) (free, requires Adobe account). Download as **FBX** format (pose doesn't matter - the tool reads the bind pose from the file).
+
 ```bash
 # Use your own Mixamo character for retargeting
 hy-motion-export "Dancing happily" -c my_character.fbx -o dance.fbx
+```
+
+### Choosing Model Variant
+
+```bash
+# Use Lite model (faster, ~8GB VRAM)
+hy-motion-export "Walking forward" --model lite -o walk.fbx
+
+# Use Full model (better quality, ~12GB VRAM)
+hy-motion-export "Walking forward" --model full -o walk.fbx
 ```
 
 ### With Duration and Seed
@@ -133,8 +145,6 @@ hy-motion-export "Standing and waving hello with right hand" -o wave.fbx
 ```
 
 ### Combining with Custom Characters
-
-Download a character from [Mixamo](https://www.mixamo.com/) (FBX format, T-pose, no animation), then:
 
 ```bash
 hy-motion-export "Walking while looking around" -c mixamo_character.fbx -o custom_walk.fbx
